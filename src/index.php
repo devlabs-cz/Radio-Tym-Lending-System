@@ -264,7 +264,7 @@ $app->get('/{radioId}', function (Request $request, Response $response, array $a
     ]);
 })->setName('fast');
 
-$app->get('/', function (Request $request, Response $response) use ($container) {
+$app->get('/', function (Request $request, Response $response) use ($container, $app) {
     $db = $container->get('db');
     $view = $container->get('view');
     $logger = $container->get('logger');
@@ -308,6 +308,7 @@ $app->get('/', function (Request $request, Response $response) use ($container) 
         'channels' => $channels,
         'radioCounts' => $radioCounts,
         'statusDictionary' => $statusDictionary,
+        'router' => $app->getRouteCollector()->getRouteParser(),
     ]);
 })->setName('radio-list');
 
