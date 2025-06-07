@@ -17,7 +17,7 @@ jobs:
         echo "FTP Password: ${{ secrets.ftp_password }}"
 
     - name: Run composer update here
-      uses: php-actions/composer@v4.0.0
+      uses: php-actions/composer@v6.1.2
       with:
         command: update
         working-directory: .
