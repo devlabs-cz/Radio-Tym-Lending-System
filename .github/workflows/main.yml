@@ -15,6 +15,12 @@ jobs:
         echo "FTP Server: ${{ secrets.ftp_server }}"
         echo "FTP Username: ${{ secrets.ftp_username }}"
         echo "FTP Password: ${{ secrets.ftp_password }}"
+
+    - name: Run composer update here
+      uses: php-actions/composer@v4.0.0
+      with:
+        command: update
+        working-directory: .
     
     - name: 📂 Sync files
       uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -22,3 +28,5 @@ jobs:
         server: ${{ secrets.ftp_server }}
         username: ${{ secrets.ftp_username }}
         password: ${{ secrets.ftp_password }}
+
+
