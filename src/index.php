@@ -319,5 +319,6 @@ try {
     $app->run();
 } catch (Throwable $e) {
     echo 'Pardon, radio ztratilo spojení...';
+    echo '<pre>' . htmlspecialchars($e, ENT_QUOTES) . '</pre>';
     die;
 }
