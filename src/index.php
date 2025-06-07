@@ -70,7 +70,7 @@ $app->get('/phpinfo', function (Request $request, Response $response, $args) {
     return $response;
 })->setName('phpinfo');
 
-$app->get('/management-radio', function (Request $request, Response $response, $args) use ($container) {
+$app->get('/management-radio', function (Request $request, Response $response, $args) use ($container,$app) {
     $db = $container->get('db');
     $view = $container->get('view');
     $query = $db->query('SELECT `id`,`radioId`, `name` FROM `radios` ORDER BY `radioId` ASC, `name` ASC');
@@ -78,6 +78,7 @@ $app->get('/management-radio', function (Request $request, Response $response, $
 
     return $view->render($response, 'management-radio.phtml', [
         'radios' => $radios,
+        'router' => $app->getRouteCollector()->getRouteParser(),
     ]);
 })->setName('management-radio');
 
@@ -191,11 +192,12 @@ $app->post('/radio-action/{action}', function (Request $request, Response $respo
     return $response->withHeader('Location', $routeParser->urlFor('radio-list'))->withStatus(302);
 })->setName('radio-action');
 
-$app->get('/log', function (Request $request, Response $response) use ($container) {
+$app->get('/log', function (Request $request, Response $response) use ($container,$app) {
     $view = $container->get('view');
     $logData = file_get_contents('../logs/rtls.log');
     return $view->render($response, 'log.phtml', [
         'log' => explode(PHP_EOL, $logData),
+        'router' => $app->getRouteCollector()->getRouteParser(),
     ]);
 })->setName('log');
 
@@ -232,7 +234,7 @@ $app->post('/fast-lent', function (Request $request, Response $response) use ($c
     return $response->withHeader('Location', $routeParser->urlFor('radio-list'))->withStatus(302);
 })->setName('fast-lent');
 
-$app->get('/qr-generate', function (Request $request, Response $response) use ($container) {
+$app->get('/qr-generate', function (Request $request, Response $response) use ($container,$app) {
     $db = $container->get('db');
     $view = $container->get('view');
     $query = $db->query('SELECT * FROM `radios`');
@@ -245,17 +247,21 @@ $app->get('/qr-generate', function (Request $request, Response $response) use ($
         'base_uri' => $_ENV['BASE_URL'],
         'radios' => $radios,
         'qr_options' => $options,
+        'router' => $app->getRouteCollector()->getRouteParser(),
     ]);
 })->setName('qr-generate');
 
-$app->get('/{radioId}', function (Request $request, Response $response, array $args) use ($container) {
+$app->get('/{radioId}', function (Request $request, Response $response, array $args) use ($container, $app) {
     $db = $container->get('db');
     $view = $container->get('view');
     $radioId = $args['radioId'];
     $query = $db->prepare('SELECT * FROM `radios` WHERE `radioId` = ?');
     $query->execute([$radioId]);
 
-    return $view->render($response, 'fast.phtml', ['r' => $query->fetch()]);
+    return $view->render($response, 'fast.phtml', [
+        'r' => $query->fetch(),
+        'router' => $app->getRouteCollector()->getRouteParser(),
+    ]);
 })->setName('fast');
 
 $app->get('/', function (Request $request, Response $response) use ($container) {
