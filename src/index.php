@@ -3,6 +3,8 @@
 use chillerlan\QRCode\QROptions;
 use \Psr\Http\Message\ServerRequestInterface as Request;
 use \Psr\Http\Message\ResponseInterface as Response;
+use Slim\Factory\AppFactory;
+use DI\Container;
 
 require __DIR__ . '/../vendor/autoload.php';
 require __DIR__ . '/utils.php';
@@ -20,30 +22,36 @@ $config['displayErrorDetails'] = true;
 $config['addContentLengthHeader'] = false;
 $config['db']['sqliteDbName'] = 'rtls.sqlite';
 
-$app = new \Slim\App(['settings' => $config]);
-$container = $app->getContainer();
+$container = new Container();
+AppFactory::setContainer($container);
+$app = AppFactory::create();
+
+// Add settings to container
+$container->set('settings', function() use ($config) {
+    return $config;
+});
 
 
 // DEPENDENCIES
 
-$container['logger'] = function ($c) {
-	$logger = new \Monolog\Logger('fileLogger');
-	$file_handler = new \Monolog\Handler\StreamHandler('../logs/rtls.log');
-	$logger->pushHandler($file_handler);
-	return $logger;
-};
+$container->set('logger', function ($c) {
+    $logger = new \Monolog\Logger('fileLogger');
+    $file_handler = new \Monolog\Handler\StreamHandler('../logs/rtls.log');
+    $logger->pushHandler($file_handler);
+    return $logger;
+});
 
-$container['db'] = function ($c) {
-	$db = $c['settings']['db'];
-	$pdo = new PDO('sqlite:'.$db['sqliteDbName']);
-	$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-	$pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-	
-	return $pdo;
-};
+$container->set('db', function ($c) {
+    $db = $c->get('settings')['db'];
+    $pdo = new PDO('sqlite:'.$db['sqliteDbName']);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    return $pdo;
+});
 
-$container['view'] = new \Slim\Views\PhpRenderer('../templates/');
-
+$container->set('view', function () {
+    return new \Slim\Views\PhpRenderer('../templates/');
+});
 
 // MIDDLEWARE
 // AUTH
@@ -57,47 +65,53 @@ $app->add(new Tuupola\Middleware\HttpBasicAuthentication([
 
 // ROUTES
 
-$app->get('/phpinfo', function (Request $request, Response $response) {
-	return $response->getBody()->write(phpinfo());
-});
+$app->get('/phpinfo', function (Request $request, Response $response, $args) {
+    $response->getBody()->write(phpinfo());
+    return $response;
+})->setName('phpinfo');
 
-$app->get('/management-radio', function (Request $request, Response $response) {
-    $query = $this->db->query('SELECT `id`,`radioId`, `name` FROM `radios` ORDER BY `radioId` ASC, `name` ASC');
+$app->get('/management-radio', function (Request $request, Response $response, $args) use ($container) {
+    $db = $container->get('db');
+    $view = $container->get('view');
+    $query = $db->query('SELECT `id`,`radioId`, `name` FROM `radios` ORDER BY `radioId` ASC, `name` ASC');
     $radios = $query->fetchAll();
 
-	return $this->view->render($response, 'management-radio.phtml', [
-        'router' => $this->router,
+    return $view->render($response, 'management-radio.phtml', [
         'radios' => $radios,
     ]);
 })->setName('management-radio');
 
-$app->post('/add-new-radio', function (Request $request, Response $response) {
-	$parsedBody = $request->getParsedBody();
-	
-	$query = $this->db->prepare('INSERT INTO `radios` (`radioId`, `name`, `status`, `last-action-time`, `last-borrower`) VALUES (?, ?, ?, ?, ?)');
-	$query->execute([
-			htmlspecialchars($parsedBody['radioId'], ENT_QUOTES),
-			htmlspecialchars($parsedBody['name'], ENT_QUOTES),
-			'ready',
-            getNow(),
-			NULL,
-		]
-	);
-	$this->logger->addInfo('Added radio with ID '.htmlspecialchars($parsedBody['radioId'], ENT_QUOTES));
-	
-	return $response->withHeader('Location', $this->router->pathFor('radio-list'));
+$app->post('/add-new-radio', function (Request $request, Response $response) use ($container) {
+    $db = $container->get('db');
+    $logger = $container->get('logger');
+    $parsedBody = $request->getParsedBody();
+
+    $query = $db->prepare('INSERT INTO `radios` (`radioId`, `name`, `status`, `last-action-time`, `last-borrower`) VALUES (?, ?, ?, ?, ?)');
+    $query->execute([
+        htmlspecialchars($parsedBody['radioId'], ENT_QUOTES),
+        htmlspecialchars($parsedBody['name'], ENT_QUOTES),
+        'ready',
+        getNow(),
+        NULL,
+    ]);
+    $logger->addInfo('Added radio with ID '.htmlspecialchars($parsedBody['radioId'], ENT_QUOTES));
+
+    $routeParser = $request->getAttribute('routeParser') ?? $GLOBALS['app']->getRouteCollector()->getRouteParser();
+    return $response->withHeader('Location', $routeParser->urlFor('radio-list'))->withStatus(302);
 })->setName('add-new-radio');
 
-$app->post('/import-radio', function (Request $request, Response $response) {
-	$importRadio = $request->getParsedBody()['importRadio'];
+$app->post('/import-radio', function (Request $request, Response $response) use ($container) {
+    $db = $container->get('db');
+    $logger = $container->get('logger');
+    $parsedBody = $request->getParsedBody();
+    $importRadio = $parsedBody['importRadio'];
     $explodedImportRadio = explode(PHP_EOL, $importRadio);
 
     foreach ($explodedImportRadio as $singleRadio) {
         $radioData = explode(';', $singleRadio);
-        
-        $query = $this->db->prepare('INSERT INTO `radios` (`radioId`, `name`, `status`, `last-action-time`, `last-borrower`) VALUES (?, ?, ?, ?, ?)');
         [$radioId, $name] = $radioData;
         if (!empty($radioId) && !empty($name)) {
+            $query = $db->prepare('INSERT INTO `radios` (`radioId`, `name`, `status`, `last-action-time`, `last-borrower`) VALUES (?, ?, ?, ?, ?)');
             $query->execute([
                 trim(htmlspecialchars($radioId, ENT_QUOTES)),
                 trim(htmlspecialchars($name, ENT_QUOTES)),
@@ -105,172 +119,188 @@ $app->post('/import-radio', function (Request $request, Response $response) {
                 getNow(),
                 NULL,
             ]);
+            $logger->addInfo('Added radio from import with ID '.htmlspecialchars($radioId, ENT_QUOTES));
         }
-        $this->logger->addInfo('Added radio from import with ID '.htmlspecialchars($importRadio['radioId'], ENT_QUOTES));
     }
 
-	return $response->withHeader('Location', $this->router->pathFor('radio-list'));
+    $routeParser = $request->getAttribute('routeParser') ?? $GLOBALS['app']->getRouteCollector()->getRouteParser();
+    return $response->withHeader('Location', $routeParser->urlFor('radio-list'))->withStatus(302);
 })->setName('import-radio');
 
-$app->post('/delete-radio', function (Request $request, Response $response) {
+$app->post('/delete-radio', function (Request $request, Response $response) use ($container) {
+    $db = $container->get('db');
+    $logger = $container->get('logger');
     $parsedBody = $request->getParsedBody();
-    $query = $this->db->prepare('DELETE FROM `radios` WHERE `id` = ?');
-    $query->execute([htmlspecialchars($parsedBody['id'], ENT_QUOTES)],
-    );
-    $this->logger->addInfo('Deleted radio with ID '.htmlspecialchars($parsedBody['radioId'], ENT_QUOTES));
+    $query = $db->prepare('DELETE FROM `radios` WHERE `id` = ?');
+    $query->execute([htmlspecialchars($parsedBody['id'], ENT_QUOTES)]);
+    $logger->addInfo('Deleted radio with ID '.htmlspecialchars($parsedBody['radioId'], ENT_QUOTES));
 
-    return $response->withHeader('Location', $this->router->pathFor('management-radio'));
+    $routeParser = $request->getAttribute('routeParser') ?? $GLOBALS['app']->getRouteCollector()->getRouteParser();
+    return $response->withHeader('Location', $routeParser->urlFor('management-radio'))->withStatus(302);
 })->setName('delete-radio');
 
-$app->post('/update-channel', function (Request $request, Response $response) {
-	$parsedBody = $request->getParsedBody();
-	$query = $this->db->prepare('UPDATE `radios` SET `channel` = ? WHERE `id` = ?');
-	$query->execute([
-            htmlspecialchars($parsedBody['channel'], ENT_QUOTES),
-            htmlspecialchars($parsedBody['radioId'], ENT_QUOTES),
-		]
-	);
-	$this->logger->addInfo('Changed channel for radio with ID '.htmlspecialchars($parsedBody['radioId'], ENT_QUOTES));
+$app->post('/update-channel', function (Request $request, Response $response) use ($container) {
+    $db = $container->get('db');
+    $logger = $container->get('logger');
+    $parsedBody = $request->getParsedBody();
+    $query = $db->prepare('UPDATE `radios` SET `channel` = ? WHERE `id` = ?');
+    $query->execute([
+        htmlspecialchars($parsedBody['channel'], ENT_QUOTES),
+        htmlspecialchars($parsedBody['radioId'], ENT_QUOTES),
+    ]);
+    $logger->addInfo('Changed channel for radio with ID '.htmlspecialchars($parsedBody['radioId'], ENT_QUOTES));
 
-	return $response->withHeader('Location', $this->router->pathFor('radio-list'));
+    $routeParser = $request->getAttribute('routeParser') ?? $GLOBALS['app']->getRouteCollector()->getRouteParser();
+    return $response->withHeader('Location', $routeParser->urlFor('radio-list'))->withStatus(302);
 })->setName('update-channel');
 
-$app->post('/radio-action/{action}', function (Request $request, Response $response, $args) {
-	$argumentAction = htmlspecialchars($args['action'], ENT_QUOTES);
-	$parsedBody = $request->getParsedBody();
-	$id = htmlspecialchars($parsedBody['id'], ENT_QUOTES);
-	$radioId = htmlspecialchars($parsedBody['radioId'], ENT_QUOTES);
+$app->post('/radio-action/{action}', function (Request $request, Response $response, $args) use ($container) {
+    $db = $container->get('db');
+    $logger = $container->get('logger');
+    $argumentAction = htmlspecialchars($args['action'], ENT_QUOTES);
+    $parsedBody = $request->getParsedBody();
+    $id = htmlspecialchars($parsedBody['id'], ENT_QUOTES);
+    $radioId = htmlspecialchars($parsedBody['radioId'], ENT_QUOTES);
 
     switch ($argumentAction) {
-		case 'lend':
-			$borrower = htmlspecialchars($parsedBody['borrower'], ENT_QUOTES);
-			$lastBorrower = htmlspecialchars($parsedBody['last-borrower'], ENT_QUOTES);
+        case 'lend':
+            $borrower = htmlspecialchars($parsedBody['borrower'], ENT_QUOTES);
+            $lastBorrower = htmlspecialchars($parsedBody['last-borrower'], ENT_QUOTES);
             if (empty($borrower) && !empty($lastBorrower)) {
                 $borrower = $lastBorrower;
             }
-			$query = $this->db->prepare('UPDATE `radios` SET `status` = ?, `last-action-time` = ?, `last-borrower` = ? WHERE `id` = ?');
-			$query->execute(['lent', getNow(), $borrower, $id]);
-			$this->logger->addInfo('Radio with ID '.$radioId.' is lent to '.$borrower.'.');
-			break;
-		case 'return':
-			$query = $this->db->prepare('UPDATE `radios` SET `status` = ?, `last-action-time` = ? WHERE `id` = ?');
-			$query->execute(['charging', getNow(), $id]);
-			$this->logger->addInfo('Radio with ID '.$radioId.' is returned.');
-			break;
-		case 'charged':
-			$query = $this->db->prepare('UPDATE `radios` SET `status` = ?, `last-action-time` = ? WHERE `id` = ?');
-			$query->execute(['ready', getNow(), $id]);
-			$this->logger->addInfo('Radio with ID '.$radioId.' is set as fully charged.');
-			break;
-		default:
-			throw new Exception('Unknown radio-action argument');
-	}
-	
-	return $response->withHeader('Location', $this->router->pathFor('radio-list'));
+            $query = $db->prepare('UPDATE `radios` SET `status` = ?, `last-action-time` = ?, `last-borrower` = ? WHERE `id` = ?');
+            $query->execute(['lent', getNow(), $borrower, $id]);
+            $logger->addInfo('Radio with ID '.$radioId.' is lent to '.$borrower.'.');
+            break;
+        case 'return':
+            $query = $db->prepare('UPDATE `radios` SET `status` = ?, `last-action-time` = ? WHERE `id` = ?');
+            $query->execute(['charging', getNow(), $id]);
+            $logger->addInfo('Radio with ID '.$radioId.' is returned.');
+            break;
+        case 'charged':
+            $query = $db->prepare('UPDATE `radios` SET `status` = ?, `last-action-time` = ? WHERE `id` = ?');
+            $query->execute(['ready', getNow(), $id]);
+            $logger->addInfo('Radio with ID '.$radioId.' is set as fully charged.');
+            break;
+        default:
+            throw new Exception('Unknown radio-action argument');
+    }
+
+    $routeParser = $request->getAttribute('routeParser') ?? $GLOBALS['app']->getRouteCollector()->getRouteParser();
+    return $response->withHeader('Location', $routeParser->urlFor('radio-list'))->withStatus(302);
 })->setName('radio-action');
 
-$app->get('/log', function (Request $request, Response $response) {
-	$logData = file_get_contents('../logs/rtls.log');
-	
-	return $this->view->render($response, 'log.phtml', ['router' => $this->router, 'log' => explode(PHP_EOL, $logData)]);
+$app->get('/log', function (Request $request, Response $response) use ($container) {
+    $view = $container->get('view');
+    $logData = file_get_contents('../logs/rtls.log');
+    return $view->render($response, 'log.phtml', [
+        'log' => explode(PHP_EOL, $logData),
+    ]);
 })->setName('log');
 
-$app->post('/fast-return', function (Request $request, Response $response) {
-    $query = $this->db->prepare('UPDATE `radios` SET `status` = "ready", `last-action-time` = ? WHERE `radioId` = ?');
+$app->post('/fast-return', function (Request $request, Response $response) use ($container) {
+    $db = $container->get('db');
+    $parsedBody = $request->getParsedBody();
+    $query = $db->prepare('UPDATE `radios` SET `status` = "ready", `last-action-time` = ? WHERE `radioId` = ?');
     $query->execute([
         getNow(),
-        $request->getParsedBody()['radioId'],
+        $parsedBody['radioId'],
     ]);
 
-    return $response->withHeader('Location', $this->router->pathFor('radio-list'));
+    $routeParser = $request->getAttribute('routeParser') ?? $GLOBALS['app']->getRouteCollector()->getRouteParser();
+    return $response->withHeader('Location', $routeParser->urlFor('radio-list'))->withStatus(302);
 })->setName('fast-return');
 
-$app->post('/fast-lent', function (Request $request, Response $response) {
+$app->post('/fast-lent', function (Request $request, Response $response) use ($container) {
+    $db = $container->get('db');
+    $logger = $container->get('logger');
     $parsedBody = $request->getParsedBody();
     $radioId = htmlspecialchars($parsedBody['radioId'], ENT_QUOTES);
     $borrower = htmlspecialchars($parsedBody['borrower'], ENT_QUOTES);
 
-    $query = $this->db->prepare('UPDATE `radios` SET `status` = ?, `last-action-time` = ?, `last-borrower` = ? WHERE `radioId` = ?');
+    $query = $db->prepare('UPDATE `radios` SET `status` = ?, `last-action-time` = ?, `last-borrower` = ? WHERE `radioId` = ?');
     $query->execute([
         'lent',
         getNow(),
         $borrower,
         $radioId,
     ]);
-    $this->logger->addInfo('Radio with ID '.$radioId.' is lent to '.$borrower.'.');
+    $logger->addInfo('Radio with ID '.$radioId.' is lent to '.$borrower.'.');
 
-    return $response->withHeader('Location', $this->router->pathFor('radio-list'));
+    $routeParser = $request->getAttribute('routeParser') ?? $GLOBALS['app']->getRouteCollector()->getRouteParser();
+    return $response->withHeader('Location', $routeParser->urlFor('radio-list'))->withStatus(302);
 })->setName('fast-lent');
 
-$app->get('/qr-generate', function (Request $request, Response $response) {
-    $query = $this->db->query('SELECT * FROM `radios`');
+$app->get('/qr-generate', function (Request $request, Response $response) use ($container) {
+    $db = $container->get('db');
+    $view = $container->get('view');
+    $query = $db->query('SELECT * FROM `radios`');
     $radios = $query->fetchAll();
-    $body = $response->getBody();
     $options = new QROptions([
         'eccLevel' => 0,
     ]);
 
-    return $this->view->render($response, 'qr.phtml', [
-        'router' => $this->router,
+    return $view->render($response, 'qr.phtml', [
         'base_uri' => $_ENV['BASE_URL'],
         'radios' => $radios,
         'qr_options' => $options,
     ]);
 })->setName('qr-generate');
 
-$app->get('/{radioId}', function (Request $request, Response $response, array $args) {
+$app->get('/{radioId}', function (Request $request, Response $response, array $args) use ($container) {
+    $db = $container->get('db');
+    $view = $container->get('view');
     $radioId = $args['radioId'];
-    $query = $this->db->prepare('SELECT * FROM `radios` WHERE `radioId` = ?');
+    $query = $db->prepare('SELECT * FROM `radios` WHERE `radioId` = ?');
     $query->execute([$radioId]);
 
-    return $this->view->render($response, 'fast.phtml', ['router' => $this->router, 'r' => $query->fetch()]);
+    return $view->render($response, 'fast.phtml', ['r' => $query->fetch()]);
 })->setName('fast');
 
-$app->get('/', function (Request $request, Response $response) {
-	//get items from DB
-	$query = $this->db->query('SELECT `id`,`radioId`, `name`, `status`, `last-action-time`, `channel`, `last-borrower` FROM `radios` ORDER BY `last-action-time` DESC');
-	$radios = $query->fetchAll();
-	$formTemplatesDirectory = 'radio-list-form-templates/';
-	
-	//get right link based by status
-	foreach ($radios as &$r) {
-		switch ($r['status']) {
-			case 'ready':
-				//lend available
-				$r['formTemplateLink'] = $formTemplatesDirectory.'lend.phtml';
-				break;
-			case 'lent':
-				//return available
-				$r['formTemplateLink'] = $formTemplatesDirectory.'return.phtml';
-				break;
-			case 'charging':
-				//lend available (but with alert) - or change status to ready
-                $query = $this->db->prepare('UPDATE `radios` SET `status` = "ready" WHERE `id` = ?');
-                $query->execute([$r['id']]);
-                $this->logger->addInfo('Radio with ID '.$r['radioId'].' is set as charged and ready.');
-                
+$app->get('/', function (Request $request, Response $response) use ($container) {
+    $db = $container->get('db');
+    $view = $container->get('view');
+    $logger = $container->get('logger');
+    $query = $db->query('SELECT `id`,`radioId`, `name`, `status`, `last-action-time`, `channel`, `last-borrower` FROM `radios` ORDER BY `last-action-time` DESC');
+    $radios = $query->fetchAll();
+    $formTemplatesDirectory = 'radio-list-form-templates/';
+
+    foreach ($radios as &$r) {
+        switch ($r['status']) {
+            case 'ready':
                 $r['formTemplateLink'] = $formTemplatesDirectory.'lend.phtml';
-				break;
-		}
-	}
+                break;
+            case 'lent':
+                $r['formTemplateLink'] = $formTemplatesDirectory.'return.phtml';
+                break;
+            case 'charging':
+                $query = $db->prepare('UPDATE `radios` SET `status` = "ready" WHERE `id` = ?');
+                $query->execute([$r['id']]);
+                $logger->addInfo('Radio with ID '.$r['radioId'].' is set as charged and ready.');
+                $r['formTemplateLink'] = $formTemplatesDirectory.'lend.phtml';
+                break;
+        }
+    }
     unset($r);
 
     $channels = range(1, 16);
-	
-	$statusDictionary = [
-		'lent' => 'Vypůjčeno',
-		'charging' => 'Nabíjí se',
-		'ready' => 'Ready',
-	];
 
-    return $this->view->render($response, 'radio-list.phtml', [
-        'router' => $this->router,
+    $statusDictionary = [
+        'lent' => 'Vypůjčeno',
+        'charging' => 'Nabíjí se',
+        'ready' => 'Ready',
+    ];
+
+    $radioCounts = [
+        'lent' => $db->query('SELECT COUNT(`id`) as count FROM `radios` WHERE status = "lent"')->fetch()['count'],
+        'notLent' => $db->query('SELECT COUNT(`id`) as count  FROM `radios` WHERE status = "ready" OR status = "charging"')->fetch()['count'],
+    ];
+
+    return $view->render($response, 'radio-list.phtml', [
         'radios' => $radios,
         'channels' => $channels,
-        'radioCounts' => [
-            'lent' => $this->db->query('SELECT COUNT(`id`) as count FROM `radios` WHERE status = "lent"')->fetch()['count'],
-            'notLent' => $this->db->query('SELECT COUNT(`id`) as count  FROM `radios` WHERE status = "ready" OR status = "charging"')->fetch()['count'],
-        ],
+        'radioCounts' => $radioCounts,
         'statusDictionary' => $statusDictionary,
     ]);
 })->setName('radio-list');
