@@ -1,5 +1,7 @@
 # github action file created
 name: 🚀 Deploy website on push
+#run on trigger manually:
+on: workflow_dispatch
 jobs:
   web-deploy:
     name: 🎉 Deploy
@@ -7,6 +9,12 @@ jobs:
     steps:
     - name: 🚚 Get latest code
       uses: actions/checkout@v4
+
+    - name: Print environment variables
+      run: |
+        echo "FTP Server: ${{ secrets.ftp_server }}"
+        echo "FTP Username: ${{ secrets.ftp_username }}"
+        echo "FTP Password: ${{ secrets.ftp_password }}"
     
     - name: 📂 Sync files
       uses: SamKirkland/FTP-Deploy-Action@v4.3.5
