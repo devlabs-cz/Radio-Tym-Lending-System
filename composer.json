@@ -11,7 +11,8 @@
     "tuupola/slim-basic-auth": "*",
     "vlucas/phpdotenv": "*",
     "chillerlan/php-qrcode": "*",
-    "php-di/php-di": "*"
+    "php-di/php-di": "*",
+    "slim/psr7": "*"
   },
   "autoload": {
 	"psr-4": {
