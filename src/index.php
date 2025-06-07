@@ -25,6 +25,7 @@ $config['db']['sqliteDbName'] = 'rtls.sqlite';
 $container = new Container();
 AppFactory::setContainer($container);
 $app = AppFactory::create();
+$app->add(new \Slim\Middleware\TrailingSlashMiddleware());
 
 // Add settings to container
 $container->set('settings', function() use ($config) {

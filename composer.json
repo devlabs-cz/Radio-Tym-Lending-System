@@ -8,6 +8,7 @@
     "slim/slim": "*",
     "monolog/monolog": "*",
     "slim/php-view": "*",
+    "slim/middleware": "*",
     "tuupola/slim-basic-auth": "*",
     "vlucas/phpdotenv": "*",
     "chillerlan/php-qrcode": "*",
