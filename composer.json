@@ -10,7 +10,8 @@
     "slim/php-view": "*",
     "tuupola/slim-basic-auth": "*",
     "vlucas/phpdotenv": "*",
-    "chillerlan/php-qrcode": "*"
+    "chillerlan/php-qrcode": "*",
+    "php-di/php-di": "*"
   },
   "autoload": {
 	"psr-4": {
