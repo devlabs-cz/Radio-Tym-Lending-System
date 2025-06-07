@@ -3,14 +3,14 @@
   "description": "Radio Team Lending System for lending radios",
   "license": "MIT",
   "require": {
-    "php": "^7.4",
+    "php": "^8.4",
     "ext-pdo": "*",
-    "slim/slim": "^3.0",
-    "monolog/monolog": "^1.23",
-    "slim/php-view": "^2.2",
-    "tuupola/slim-basic-auth": "^3.3",
-    "vlucas/phpdotenv": "^5.5",
-    "chillerlan/php-qrcode": "^4.3"
+    "slim/slim": "*",
+    "monolog/monolog": "*",
+    "slim/php-view": "*",
+    "tuupola/slim-basic-auth": "*",
+    "vlucas/phpdotenv": "*",
+    "chillerlan/php-qrcode": "*"
   },
   "autoload": {
 	"psr-4": {
